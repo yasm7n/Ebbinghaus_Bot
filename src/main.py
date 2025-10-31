@@ -253,11 +253,11 @@ def main():
     """Основная функция запуска бота"""
     load_data()
     
-    # Получаем токен из переменных окружения Railway
+    # Получаем токен из переменных окружения
     TOKEN = os.environ.get('BOT_TOKEN')
     
     if not TOKEN:
-        print("❌ Токен бота не найден! Добавьте BOT_TOKEN в переменные окружения Railway")
+        print("❌ Токен бота не найден! Добавьте BOT_TOKEN в Environment Variables")
         return
     
     application = Application.builder().token(TOKEN).build()
@@ -269,8 +269,10 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_input))
     application.add_handler(MessageHandler(filters.COMMAND, handle_unknown))
     
-    print("🚀 Бот запущен на Railway!")
-    application.run_polling()
+    print("🚀 Бот запущен на Render!")
+    
+    # Исправленный вызов для новой версии библиотеки
+    application.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':
     main()
