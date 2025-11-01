@@ -1,6 +1,7 @@
 import os
 import logging
 import json
+import asyncio
 from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -245,7 +246,7 @@ async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "❌ Используйте /start, /newtopic, /list или /done"
     )
 
-def main():
+async def main():
     """Основная функция запуска бота"""
     load_data()
     
@@ -254,7 +255,7 @@ def main():
     
     if not TOKEN:
         print("❌ Токен бота не найден! Установите переменную окружения BOT_TOKEN.")
-        exit(1)
+        return
     
     application = Application.builder().token(TOKEN).build()
     
@@ -266,7 +267,7 @@ def main():
     application.add_handler(MessageHandler(filters.COMMAND, handle_unknown))
     
     print("🚀 Бот запущен на Render!")
-    application.run_polling()
+    await application.run_polling()
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())
