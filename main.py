@@ -2,12 +2,11 @@ import os
 import logging
 import json
 import threading
+import time
 from datetime import datetime, timedelta
 from flask import Flask
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-
-# ITS FINALLY WORKING!!!
 
 # Настройка логирования
 logging.basicConfig(
@@ -293,7 +292,32 @@ def main():
     flask_thread.start()
     
     print("🤖 Запускаем Telegram бота...")
-    application.run_polling()
+    
+    # Улучшенный запуск с обработкой ошибок
+    max_retries = 3
+    retry_count = 0
+    
+    while retry_count < max_retries:
+        try:
+            application.run_polling(
+                drop_pending_updates=True,  # Игнорирует сообщения, полученные во время простоя
+                allowed_updates=Update.ALL_TYPES,
+                poll_interval=1,
+                timeout=10
+            )
+        except Exception as e:
+            retry_count += 1
+            print(f"❌ Ошибка при запуске бота (попытка {retry_count}/{max_retries}): {e}")
+            
+            if retry_count < max_retries:
+                print(f"🔄 Перезапускаем через 10 секунд...")
+                time.sleep(10)
+            else:
+                print("🚫 Достигнуто максимальное количество попыток перезапуска")
+                break
+        else:
+            # Если бот остановился без ошибки (например, ручной останов)
+            break
 
 if __name__ == '__main__':
     main()
