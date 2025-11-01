@@ -21,6 +21,7 @@ app = Flask(__name__)
 def home():
     return "🤖 Бот для повторения по методу Эббингауза работает! 🚀"
 
+# Добавляем маршруты для мониторинга
 @app.route('/ping')
 def ping():
     return "pong", 200
@@ -32,7 +33,7 @@ def health():
 @app.route('/status')
 def status():
     return jsonify({
-        "status": "operational",
+        "status": "operational", 
         "service": "Ebbinghaus Bot",
         "timestamp": datetime.now().isoformat(),
         "users_count": len(user_data)
@@ -281,15 +282,14 @@ def main():
     """Основная функция запуска бота"""
     load_data()
     
-    # 🔧 ПОЛУЧАЕМ ТОКЕН ИЗ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ
     TOKEN = os.getenv('BOT_TOKEN')
-    
     if not TOKEN:
-        print("❌ Токен бота не найден! Установите переменную окружения BOT_TOKEN.")
+        print("❌ Токен бота не найден!")
         return
     
     application = Application.builder().token(TOKEN).build()
     
+    # Добавляем обработчики
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("newtopic", new_topic))
     application.add_handler(CommandHandler("list", list_topics))
