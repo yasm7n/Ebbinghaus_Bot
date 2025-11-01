@@ -1,8 +1,9 @@
 import os
 import logging
 import json
-import asyncio
+import threading
 from datetime import datetime, timedelta
+from flask import Flask
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
@@ -11,6 +12,21 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
+
+# Создаем Flask приложение для порта
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "🤖 Бот для повторения по методу Эббингауза работает! 🚀"
+
+@app.route('/health')
+def health():
+    return "OK", 200
+
+def run_flask():
+    """Запускает Flask сервер в отдельном потоке"""
+    app.run(host='0.0.0.0', port=5000, debug=False)
 
 # Константы
 DATA_FILE = "user_data.json"
@@ -81,6 +97,7 @@ def save_data():
     except Exception as e:
         print(f"❌ Ошибка при сохранении данных: {e}")
 
+# Функции бота (остаются без изменений)
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = """
 🤖 Добро пожаловать в бота для повторения по методу Эббингауза!
@@ -246,9 +263,7 @@ async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "❌ Используйте /start, /newtopic, /list или /done"
     )
 
-# Бот для повторения по методу Эббингауза - работает на Render!
-
-def main(): 
+def main():
     """Основная функция запуска бота"""
     load_data()
     
@@ -268,9 +283,14 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_input))
     application.add_handler(MessageHandler(filters.COMMAND, handle_unknown))
     
-    print("🚀 Бот запущен на Render!")
+    print("🚀 Запускаем Flask сервер для порта 5000...")
     
-    # Используем простой запуск без asyncio.run для совместимости
+    # Запускаем Flask в отдельном потоке
+    flask_thread = threading.Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+    
+    print("🤖 Запускаем Telegram бота...")
     application.run_polling()
 
 if __name__ == '__main__':
