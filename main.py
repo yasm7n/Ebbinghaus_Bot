@@ -246,7 +246,9 @@ async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "❌ Используйте /start, /newtopic, /list или /done"
     )
 
-def main():
+# Бот для повторения по методу Эббингауза - работает на Render!
+
+def main(): 
     """Основная функция запуска бота"""
     load_data()
     
