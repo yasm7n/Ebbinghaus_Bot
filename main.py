@@ -246,7 +246,7 @@ async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "❌ Используйте /start, /newtopic, /list или /done"
     )
 
-async def main():
+def main():
     """Основная функция запуска бота"""
     load_data()
     
@@ -267,7 +267,9 @@ async def main():
     application.add_handler(MessageHandler(filters.COMMAND, handle_unknown))
     
     print("🚀 Бот запущен на Render!")
-    await application.run_polling()
+    
+    # Используем простой запуск без asyncio.run для совместимости
+    application.run_polling()
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    main()
