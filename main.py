@@ -2,12 +2,13 @@ import os
 import logging
 import json
 import threading
+import time
 from datetime import datetime, timedelta
-from flask import Flask
+from flask import Flask, jsonify
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-
-# ITS FINALLY WORKING!!!
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.date import DateTrigger
 
 # Настройка логирования
 logging.basicConfig(
@@ -18,13 +19,21 @@ logging.basicConfig(
 # Создаем Flask приложение для порта
 app = Flask(__name__)
 
+# Глобальные переменные
+user_data = {}
+scheduler = None
+
 @app.route('/')
 def home():
     return "🤖 Бот для повторения по методу Эббингауза работает! 🚀"
 
+@app.route('/ping')
+def ping():
+    return "pong", 200
+
 @app.route('/health')
 def health():
-    return "OK", 200
+    return jsonify({"status": "healthy", "bot": "running", "timestamp": datetime.now().isoformat()}), 200
 
 def run_flask():
     """Запускает Flask сервер в отдельном потоке"""
@@ -39,8 +48,6 @@ INTERVALS = [
     timedelta(days=8),
     timedelta(days=30)
 ]
-
-user_data = {}
 
 def load_data():
     """Загрузка данных из файла"""
@@ -99,7 +106,73 @@ def save_data():
     except Exception as e:
         print(f"❌ Ошибка при сохранении данных: {e}")
 
-# Функции бота (остаются без изменений)
+async def send_reminder(application, user_id, topic_name, repetition_date, repetition_number):
+    """Отправка напоминания пользователю"""
+    try:
+        message = f"🔔 **Напоминание о повторении**\n\n"
+        message += f"📚 Тема: {topic_name}\n"
+        message += f"🕐 Время повторения: {repetition_date.strftime('%d.%m.%Y %H:%M')}\n"
+        message += f"📅 Это повторение №{repetition_number} по методу Эббингауза\n\n"
+        message += "Используйте /done чтобы отметить как выполненное"
+        
+        await application.bot.send_message(
+            chat_id=user_id, 
+            text=message,
+            parse_mode='Markdown'
+        )
+        print(f"✅ Напоминание отправлено пользователю {user_id} для темы '{topic_name}'")
+    except Exception as e:
+        print(f"❌ Ошибка отправки напоминания: {e}")
+
+def schedule_reminders(application):
+    """Планирование всех напоминаний при запуске"""
+    global scheduler
+    
+    if scheduler is None:
+        scheduler = BackgroundScheduler()
+        scheduler.start()
+        print("🕐 Планировщик напоминаний запущен")
+    
+    # Очищаем старые задания
+    scheduler.remove_all_jobs()
+    
+    # Планируем напоминания для всех пользователей
+    for user_id, topics in user_data.items():
+        for topic_index, topic in enumerate(topics):
+            for rep_index, repetition in enumerate(topic['repetitions']):
+                if not repetition['completed'] and repetition['date'] > datetime.now():
+                    job_id = f"reminder_{user_id}_{topic_index}_{rep_index}"
+                    
+                    scheduler.add_job(
+                        send_reminder,
+                        trigger=DateTrigger(run_date=repetition['date']),
+                        args=[application, user_id, topic['topic'], repetition['date'], rep_index + 1],
+                        id=job_id
+                    )
+                    print(f"📅 Запланировано напоминание: {job_id} на {repetition['date']}")
+    
+    print(f"✅ Запланировано {len(scheduler.get_jobs())} напоминаний")
+
+def schedule_single_reminder(application, user_id, topic_index, rep_index):
+    """Планирование одного напоминания"""
+    if scheduler is None:
+        return
+    
+    topic = user_data[user_id][topic_index]
+    repetition = topic['repetitions'][rep_index]
+    
+    if not repetition['completed'] and repetition['date'] > datetime.now():
+        job_id = f"reminder_{user_id}_{topic_index}_{rep_index}"
+        
+        scheduler.add_job(
+            send_reminder,
+            trigger=DateTrigger(run_date=repetition['date']),
+            args=[application, user_id, topic['topic'], repetition['date'], rep_index + 1],
+            id=job_id
+        )
+        print(f"📅 Запланировано новое напоминание: {job_id}")
+
+# Существующие функции бота остаются без изменений
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = """
 🤖 Добро пожаловать в бота для повторения по методу Эббингауза!
@@ -108,8 +181,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /newtopic - добавить новую тему
 /list - показать все темы
 /done - отметить повторение как выполненное
-    """
-    await update.message.reply_text(welcome_text)
+
+🔔 *Новая функция:* автоматические напоминания о повторениях!
+"""
+    await update.message.reply_text(welcome_text, parse_mode='Markdown')
 
 async def new_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📝 Запишите тему, которую вы изучили:")
@@ -156,10 +231,17 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_data[user_id].append(topic_data)
             save_data()
             
-            response = f"✅ Тема '{topic}' добавлена!\n\n📅 Расписание:\n"
+            # Планируем напоминания для новой темы
+            topic_index = len(user_data[user_id]) - 1
+            for rep_index in range(len(INTERVALS)):
+                schedule_single_reminder(context.application, user_id, topic_index, rep_index)
+            
+            response = f"✅ Тема '{topic}' добавлена!\n\n📅 Расписание повторений:\n"
             for i, rep in enumerate(repetitions, 1):
                 status = "✅" if rep['completed'] else "⏳"
                 response += f"{i}. {rep['date'].strftime('%d.%m.%Y %H:%M')} {status}\n"
+            
+            response += "\n🔔 Напоминания запланированы автоматически!"
             
             await update.message.reply_text(response)
             context.user_data.pop('temp_topic', None)
@@ -200,6 +282,14 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if 0 <= repetition_index < len(user_topics[topic_index]['repetitions']):
                 user_topics[topic_index]['repetitions'][repetition_index]['completed'] = True
                 save_data()
+                
+                # Удаляем запланированное напоминание, если оно есть
+                if scheduler:
+                    job_id = f"reminder_{user_id}_{topic_index}_{repetition_index}"
+                    job = scheduler.get_job(job_id)
+                    if job:
+                        job.remove()
+                        print(f"🗑️ Удалено напоминание: {job_id}")
                 
                 context.user_data.pop('selected_topic_index', None)
                 context.user_data.pop('waiting_for', None)
@@ -269,15 +359,14 @@ def main():
     """Основная функция запуска бота"""
     load_data()
     
-    # 🔧 ПОЛУЧАЕМ ТОКЕН ИЗ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ
     TOKEN = os.getenv('BOT_TOKEN')
-    
     if not TOKEN:
-        print("❌ Токен бота не найден! Установите переменную окружения BOT_TOKEN.")
+        print("❌ Токен бота не найден!")
         return
     
     application = Application.builder().token(TOKEN).build()
     
+    # Добавляем обработчики
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("newtopic", new_topic))
     application.add_handler(CommandHandler("list", list_topics))
@@ -292,8 +381,36 @@ def main():
     flask_thread.daemon = True
     flask_thread.start()
     
+    # Запускаем планировщик напоминаний
+    schedule_reminders(application)
+    
     print("🤖 Запускаем Telegram бота...")
-    application.run_polling()
+    
+    # Улучшенный запуск с автоматическим восстановлением
+    while True:
+        try:
+            application.run_polling(
+                drop_pending_updates=True,
+                allowed_updates=Update.ALL_TYPES,
+                poll_interval=1,
+                timeout=10,
+                close_loop=False
+            )
+        except Exception as e:
+            print(f"❌ Ошибка бота: {e}")
+            print("🔄 Перезапускаем бота через 30 секунд...")
+            time.sleep(30)
+            # Пересоздаем application для чистого перезапуска
+            application = Application.builder().token(TOKEN).build()
+            # Пере добавляем обработчики
+            application.add_handler(CommandHandler("start", start))
+            application.add_handler(CommandHandler("newtopic", new_topic))
+            application.add_handler(CommandHandler("list", list_topics))
+            application.add_handler(CommandHandler("done", mark_done))
+            application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_input))
+            application.add_handler(MessageHandler(filters.COMMAND, handle_unknown))
+            # Перезапускаем планировщик
+            schedule_reminders(application)
 
 if __name__ == '__main__':
     main()
