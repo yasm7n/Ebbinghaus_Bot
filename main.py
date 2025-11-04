@@ -9,12 +9,16 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.date import DateTrigger
+import pytz  # Добавляем для работы с часовыми поясами
 
 # Настройка логирования
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
+
+# Московский часовой пояс
+MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
 # Создаем Flask приложение для порта
 app = Flask(__name__)
@@ -49,6 +53,18 @@ INTERVALS = [
     timedelta(days=30)
 ]
 
+def get_moscow_time():
+    """Возвращает текущее время в Московском часовом поясе"""
+    return datetime.now(MOSCOW_TZ)
+
+def parse_moscow_time(date_string):
+    """Парсит строку даты и возвращает в Московском часовом поясе"""
+    try:
+        naive_dt = datetime.strptime(date_string, '%d.%m.%Y %H:%M')
+        return MOSCOW_TZ.localize(naive_dt)
+    except ValueError:
+        raise ValueError("Неверный формат даты")
+
 def load_data():
     """Загрузка данных из файла"""
     global user_data
@@ -60,12 +76,17 @@ def load_data():
                     user_id = int(user_id_str)
                     user_data[user_id] = []
                     for topic in topics:
+                        # Загружаем даты с учетом часового пояса
+                        study_date = datetime.fromisoformat(topic['study_date'])
+                        if study_date.tzinfo is None:
+                            study_date = MOSCOW_TZ.localize(study_date)
+                        
                         topic_data = {
                             'topic': topic['topic'],
-                            'study_date': datetime.fromisoformat(topic['study_date']),
+                            'study_date': study_date,
                             'repetitions': [
                                 {
-                                    'date': datetime.fromisoformat(rep['date']),
+                                    'date': MOSCOW_TZ.localize(datetime.fromisoformat(rep['date'])) if datetime.fromisoformat(rep['date']).tzinfo is None else datetime.fromisoformat(rep['date']),
                                     'completed': rep['completed']
                                 }
                                 for rep in topic['repetitions']
@@ -109,9 +130,12 @@ def save_data():
 async def send_reminder(application, user_id, topic_name, repetition_date, repetition_number):
     """Отправка напоминания пользователю"""
     try:
+        # Конвертируем время в московское для отображения
+        moscow_time = repetition_date.astimezone(MOSCOW_TZ)
+        
         message = f"🔔 **Напоминание о повторении**\n\n"
         message += f"📚 Тема: {topic_name}\n"
-        message += f"🕐 Время повторения: {repetition_date.strftime('%d.%m.%Y %H:%M')}\n"
+        message += f"🕐 Время повторения: {moscow_time.strftime('%d.%m.%Y %H:%M')} (МСК)\n"
         message += f"📅 Это повторение №{repetition_number} по методу Эббингауза\n\n"
         message += "Используйте /done чтобы отметить как выполненное"
         
@@ -129,9 +153,9 @@ def schedule_reminders(application):
     global scheduler
     
     if scheduler is None:
-        scheduler = BackgroundScheduler()
+        scheduler = BackgroundScheduler(timezone=MOSCOW_TZ)  # Указываем московский часовой пояс
         scheduler.start()
-        print("🕐 Планировщик напоминаний запущен")
+        print("🕐 Планировщик напоминаний запущен (Московское время)")
     
     # Очищаем старые задания
     scheduler.remove_all_jobs()
@@ -140,7 +164,7 @@ def schedule_reminders(application):
     for user_id, topics in user_data.items():
         for topic_index, topic in enumerate(topics):
             for rep_index, repetition in enumerate(topic['repetitions']):
-                if not repetition['completed'] and repetition['date'] > datetime.now():
+                if not repetition['completed'] and repetition['date'] > get_moscow_time():
                     job_id = f"reminder_{user_id}_{topic_index}_{rep_index}"
                     
                     scheduler.add_job(
@@ -149,7 +173,7 @@ def schedule_reminders(application):
                         args=[application, user_id, topic['topic'], repetition['date'], rep_index + 1],
                         id=job_id
                     )
-                    print(f"📅 Запланировано напоминание: {job_id} на {repetition['date']}")
+                    print(f"📅 Запланировано напоминание: {job_id} на {repetition['date'].strftime('%d.%m.%Y %H:%M')} МСК")
     
     print(f"✅ Запланировано {len(scheduler.get_jobs())} напоминаний")
 
@@ -161,7 +185,7 @@ def schedule_single_reminder(application, user_id, topic_index, rep_index):
     topic = user_data[user_id][topic_index]
     repetition = topic['repetitions'][rep_index]
     
-    if not repetition['completed'] and repetition['date'] > datetime.now():
+    if not repetition['completed'] and repetition['date'] > get_moscow_time():
         job_id = f"reminder_{user_id}_{topic_index}_{rep_index}"
         
         scheduler.add_job(
@@ -170,9 +194,9 @@ def schedule_single_reminder(application, user_id, topic_index, rep_index):
             args=[application, user_id, topic['topic'], repetition['date'], rep_index + 1],
             id=job_id
         )
-        print(f"📅 Запланировано новое напоминание: {job_id}")
+        print(f"📅 Запланировано новое напоминание: {job_id} на {repetition['date'].strftime('%d.%m.%Y %H:%M')} МСК")
 
-# Существующие функции бота остаются без изменений
+# Существующие функции бота с обновлением для московского времени
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = """
 🤖 Добро пожаловать в бота для повторения по методу Эббингауза!
@@ -183,6 +207,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /done - отметить повторение как выполненное
 
 🔔 *Новая функция:* автоматические напоминания о повторениях!
+⏰ *Часовой пояс:* Московское время (UTC+3)
 """
     await update.message.reply_text(welcome_text, parse_mode='Markdown')
 
@@ -199,15 +224,15 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['temp_topic'] = user_text
         context.user_data['waiting_for'] = 'date'
         await update.message.reply_text(
-            "🕐 Введите дату и время в формате ДД.ММ.ГГГГ ЧЧ:ММ\nИли 'сейчас'"
+            "🕐 Введите дату и время в формате ДД.ММ.ГГГГ ЧЧ:ММ (Московское время)\nИли 'сейчас'"
         )
     
     elif waiting_for == 'date':
         try:
             if user_text.lower() == 'сейчас':
-                study_date = datetime.now()
+                study_date = get_moscow_time()  # Используем московское время
             else:
-                study_date = datetime.strptime(user_text, '%d.%m.%Y %H:%M')
+                study_date = parse_moscow_time(user_text)  # Парсим с учетом московского пояса
             
             topic = context.user_data['temp_topic']
             
@@ -236,10 +261,11 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for rep_index in range(len(INTERVALS)):
                 schedule_single_reminder(context.application, user_id, topic_index, rep_index)
             
-            response = f"✅ Тема '{topic}' добавлена!\n\n📅 Расписание повторений:\n"
+            response = f"✅ Тема '{topic}' добавлена!\n\n📅 Расписание повторений (Московское время):\n"
             for i, rep in enumerate(repetitions, 1):
                 status = "✅" if rep['completed'] else "⏳"
-                response += f"{i}. {rep['date'].strftime('%d.%m.%Y %H:%M')} {status}\n"
+                moscow_time = rep['date'].astimezone(MOSCOW_TZ) if rep['date'].tzinfo else rep['date']
+                response += f"{i}. {moscow_time.strftime('%d.%m.%Y %H:%M')} {status}\n"
             
             response += "\n🔔 Напоминания запланированы автоматически!"
             
@@ -264,7 +290,8 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 for i, repetition in enumerate(topic_data['repetitions'], 1):
                     status = "✅" if repetition['completed'] else "❌"
-                    response += f"{i}. {repetition['date'].strftime('%d.%m.%Y %H:%M')} {status}\n"
+                    moscow_time = repetition['date'].astimezone(MOSCOW_TZ) if repetition['date'].tzinfo else repetition['date']
+                    response += f"{i}. {moscow_time.strftime('%d.%m.%Y %H:%M')} {status}\n"
                 
                 await update.message.reply_text(response)
             else:
@@ -295,10 +322,11 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data.pop('waiting_for', None)
                 
                 topic_name = user_topics[topic_index]['topic']
-                rep_date = user_topics[topic_index]['repetitions'][repetition_index]['date'].strftime('%d.%m.%Y %H:%M')
+                rep_date = user_topics[topic_index]['repetitions'][repetition_index]['date']
+                moscow_time = rep_date.astimezone(MOSCOW_TZ) if rep_date.tzinfo else rep_date
                 
                 await update.message.reply_text(
-                    f"✅ Повторение {repetition_index + 1} для '{topic_name}' выполнено!\nВремя: {rep_date}"
+                    f"✅ Повторение {repetition_index + 1} для '{topic_name}' выполнено!\nВремя: {moscow_time.strftime('%d.%m.%Y %H:%M')} МСК"
                 )
             else:
                 await update.message.reply_text("❌ Неверный номер повторения!")
@@ -320,7 +348,9 @@ async def list_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     for topic_index, topic_data in enumerate(user_data[user_id], 1):
         response += f"🎯 Тема {topic_index}: {topic_data['topic']}\n"
-        response += f"   Изучена: {topic_data['study_date'].strftime('%d.%m.%Y %H:%M')}\n"
+        study_date = topic_data['study_date']
+        moscow_study_time = study_date.astimezone(MOSCOW_TZ) if study_date.tzinfo else study_date
+        response += f"   Изучена: {moscow_study_time.strftime('%d.%m.%Y %H:%M')} МСК\n"
         response += "   Повторения:\n"
         
         completed_count = sum(1 for rep in topic_data['repetitions'] if rep['completed'])
@@ -328,7 +358,9 @@ async def list_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         for rep_index, repetition in enumerate(topic_data['repetitions'], 1):
             status = "✅ Выполнено" if repetition['completed'] else "⏳ Ожидает"
-            response += f"   {rep_index}. {repetition['date'].strftime('%d.%m.%Y %H:%M')} - {status}\n"
+            rep_date = repetition['date']
+            moscow_rep_time = rep_date.astimezone(MOSCOW_TZ) if rep_date.tzinfo else rep_date
+            response += f"   {rep_index}. {moscow_rep_time.strftime('%d.%m.%Y %H:%M')} МСК - {status}\n"
         
         response += f"   Прогресс: {completed_count}/{total_count} выполнено\n\n"
     
